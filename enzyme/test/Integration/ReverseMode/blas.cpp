@@ -138,6 +138,21 @@ void my_getrs(char layout, char trans, int N, int Nrhs,
   inDerivative = true;
 }
 
+void my_getrf(char layout, int M, int N, double *__restrict__ A, int lda,
+              int *__restrict__ ipiv) {
+  int info;
+  cblas_dgetrf(layout, M, N, A, lda, ipiv, &info);
+  inDerivative = true;
+}
+
+void ow_getrf(char layout, int M, int N, double *__restrict__ A, int lda,
+              int *__restrict__ ipiv) {
+  int info;
+  cblas_dgetrf(layout, M, N, A, lda, ipiv, &info);
+  cblas_dscal(1, 0.0, A, lda);
+  inDerivative = true;
+}
+
 void my_trtrs(char layout, char uplo, char trans, char diag, int N, int Nrhs,
               double *__restrict__ A, int lda, double *__restrict__ B,
               int ldb) {
@@ -2562,6 +2577,136 @@ static void getrsTests() {
   }
 }
 
+static void getrfTests() {
+  int N = 5;
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    int localLDA = N + 2;
+    double *pA = A;
+    double *pdA = dA;
+    int *pIPIV = IPIV;
+    BlasInfo inputs[6] = {
+        /*A*/ BlasInfo(pA, layout, N, N, localLDA),
+        /*dA*/ BlasInfo(pdA, layout, N, N, localLDA),
+        BlasInfo(),
+        BlasInfo(),
+        BlasInfo(),
+        BlasInfo(),
+    };
+    {
+      std::string Test = "GETRF active A";
+      init();
+
+      my_getrf(layout, N, N, pA, localLDA, pIPIV);
+
+      assert(calls.size() == 1);
+      assert(calls[0].inDerivative == false);
+      assert(calls[0].type == CallType::GETRF);
+      assert(calls[0].pout_arg1 == pA);
+      assert(calls[0].pin_arg2 == pIPIV);
+      assert(calls[0].layout == layout);
+      assert(calls[0].iarg1 == N);
+      assert(calls[0].iarg2 == N);
+      assert(calls[0].iarg4 == localLDA);
+
+      checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+      init();
+      __enzyme_autodiff((void *)my_getrf, enzyme_const, layout, enzyme_const,
+                        N, enzyme_const, N, enzyme_dup, pA, pdA, enzyme_const,
+                        localLDA, enzyme_const, pIPIV);
+      foundCalls = calls;
+      init();
+
+      assert(foundCalls.size() >= 13);
+      assert(foundCalls[1].type == CallType::LACPY);
+      double *lo = (double *)foundCalls[1].pout_arg1;
+      inputs[3] = BlasInfo(lo, layout, N, N, N);
+      assert(foundCalls[4].type == CallType::LACPY);
+      double *Fbar = (double *)foundCalls[4].pout_arg1;
+      inputs[4] = BlasInfo(Fbar, layout, N, N, N);
+      assert(foundCalls[6].type == CallType::LACPY);
+      double *up = (double *)foundCalls[6].pout_arg1;
+      inputs[5] = BlasInfo(up, layout, N, N, N);
+
+      my_getrf(layout, N, N, pA, localLDA, pIPIV);
+      cblas_dlacpy(layout, 'L', N, N, pdA, localLDA, lo, N);
+      cblas_dlascl(layout, 'U', 0, 0, 1.0, 0.0, N, N, lo, N, 0);
+      cblas_dtrmm(layout, 'L', 'L', 'T', 'U', N, N, 1.0, pA, localLDA, lo, N);
+      cblas_dlacpy(layout, 'L', N, N, lo, N, Fbar, N);
+      cblas_dlascl(layout, 'U', 0, 0, 1.0, 0.0, N, N, Fbar, N, 0);
+      cblas_dlacpy(layout, 'U', N, N, pdA, localLDA, up, N);
+      cblas_dtrmm(layout, 'R', 'U', 'T', 'N', N, N, 1.0, pA, localLDA, up, N);
+      cblas_dlacpy(layout, 'U', N, N, up, N, Fbar, N);
+      cblas_dtrsm(layout, 'L', 'L', 'T', 'U', N, N, 1.0, pA, localLDA, Fbar, N);
+      cblas_dtrsm(layout, 'R', 'U', 'T', 'N', N, N, 1.0, pA, localLDA, Fbar, N);
+      cblas_dlaswp(layout, N, Fbar, N, 1, N, pIPIV, -1);
+      cblas_dlacpy(layout, 'G', N, N, Fbar, N, pdA, localLDA);
+
+      checkTest(Test);
+      checkMemoryTrace(inputs, "Expected " + Test, calls);
+      checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+    }
+    {
+      std::string Test = "GETRF overwrite A";
+      init();
+
+      __enzyme_autodiff((void *)ow_getrf, enzyme_const, layout, enzyme_const,
+                        N, enzyme_const, N, enzyme_dup, pA, pdA, enzyme_const,
+                        localLDA, enzyme_const, pIPIV);
+      foundCalls = calls;
+      init();
+
+      assert(foundCalls.size() >= 15);
+      assert(foundCalls[1].type == CallType::LACPY);
+      double *cacheA = (double *)foundCalls[1].pout_arg1;
+      inputs[2] = BlasInfo(cacheA, layout, N, N, N);
+      assert(foundCalls[4].type == CallType::LACPY);
+      double *lo = (double *)foundCalls[4].pout_arg1;
+      inputs[3] = BlasInfo(lo, layout, N, N, N);
+      assert(foundCalls[7].type == CallType::LACPY);
+      double *Fbar = (double *)foundCalls[7].pout_arg1;
+      inputs[4] = BlasInfo(Fbar, layout, N, N, N);
+      assert(foundCalls[9].type == CallType::LACPY);
+      double *up = (double *)foundCalls[9].pout_arg1;
+      inputs[5] = BlasInfo(up, layout, N, N, N);
+
+      cblas_dgetrf(layout, N, N, pA, localLDA, pIPIV, nullptr);
+      cblas_dlacpy(layout, '\0', N, N, pA, localLDA, cacheA, N);
+      cblas_dscal(1, 0.0, pA, localLDA);
+
+      inDerivative = true;
+      cblas_dscal(1, 0.0, pdA, localLDA);
+      cblas_dlacpy(layout, 'L', N, N, pdA, localLDA, lo, N);
+      cblas_dlascl(layout, 'U', 0, 0, 1.0, 0.0, N, N, lo, N, 0);
+      cblas_dtrmm(layout, 'L', 'L', 'T', 'U', N, N, 1.0, cacheA, N, lo, N);
+      cblas_dlacpy(layout, 'L', N, N, lo, N, Fbar, N);
+      cblas_dlascl(layout, 'U', 0, 0, 1.0, 0.0, N, N, Fbar, N, 0);
+      cblas_dlacpy(layout, 'U', N, N, pdA, localLDA, up, N);
+      cblas_dtrmm(layout, 'R', 'U', 'T', 'N', N, N, 1.0, cacheA, N, up, N);
+      cblas_dlacpy(layout, 'U', N, N, up, N, Fbar, N);
+      cblas_dtrsm(layout, 'L', 'L', 'T', 'U', N, N, 1.0, cacheA, N, Fbar, N);
+      cblas_dtrsm(layout, 'R', 'U', 'T', 'N', N, N, 1.0, cacheA, N, Fbar, N);
+      cblas_dlaswp(layout, N, Fbar, N, 1, N, pIPIV, -1);
+      cblas_dlacpy(layout, 'G', N, N, Fbar, N, pdA, localLDA);
+
+      checkTest(Test);
+    }
+    {
+      std::string Test = "GETRF const A rectangular";
+      init();
+      __enzyme_autodiff((void *)my_getrf, enzyme_const, layout, enzyme_const,
+                        N + 1, enzyme_const, N, enzyme_const, pA,
+                        enzyme_const, localLDA, enzyme_const, pIPIV);
+      foundCalls = calls;
+      init();
+
+      my_getrf(layout, N + 1, N, pA, localLDA, pIPIV);
+
+      checkTest(Test);
+    }
+  }
+}
+
 int main() {
   dotTests();
 
@@ -2588,6 +2733,8 @@ int main() {
   trtrsTests();
 
   getrsTests();
+
+  getrfTests();
   
   symmTests();
 

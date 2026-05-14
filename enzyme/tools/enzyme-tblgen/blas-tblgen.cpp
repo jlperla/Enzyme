@@ -606,7 +606,78 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "    valueL = ConstantInt::get(charType, 'L');\n"
        << "    valueU = ConstantInt::get(charType, 'U');\n"
        << "  }\n\n";
+  } else if (pattern.getName() == "getrf") {
+    os << "  Value *valueN = ConstantInt::get(charType, 'N');\n"
+       << "  Value *valueT = ConstantInt::get(charType, 'T');\n"
+       << "  Value *valueG = ConstantInt::get(charType, 'G');\n"
+       << "  Value *valueR = ConstantInt::get(charType, 'R');\n"
+       << "  Value *valueL = ConstantInt::get(charType, 'L');\n"
+       << "  Value *valueU = ConstantInt::get(charType, 'U');\n\n";
   }
+}
+
+void emit_shape_guards(const TGPattern &pattern, raw_ostream &os,
+                       StringRef builderName, StringRef indent) {
+  if (pattern.getName() != "getrf")
+    return;
+
+  os << indent << "if (active_A) {\n"
+     << indent << "  Value *getrf_m = load_if_ref(" << builderName
+     << ", intType, arg_m, "
+        "byRef);\n"
+     << indent << "  Value *getrf_n = load_if_ref(" << builderName
+     << ", intType, arg_n, "
+        "byRef);\n"
+     << indent << "  if (getrf_m->getType() != getrf_n->getType())\n"
+     << indent << "    getrf_n = " << builderName
+     << ".CreateIntCast(getrf_n, getrf_m->getType(), "
+        "true, \"getrf.n.cast\");\n"
+     << indent << "  Value *getrf_square = " << builderName
+     << ".CreateICmpEQ(getrf_m, getrf_n, "
+        "\"getrf.square\");\n"
+     << indent << "  Value *getrf_can_continue = getrf_square;\n"
+     << indent << "  if (gutils->runtimeActivity && rt_inactive_A)\n"
+     << indent << "    getrf_can_continue = " << builderName
+     << ".CreateOr(getrf_can_continue, "
+        "rt_inactive_A, \"getrf.square.or.inactive\");\n"
+     << indent << "  if (auto squareC = dyn_cast<ConstantInt>(getrf_square)) "
+        "{\n"
+     << indent << "    if (!squareC->isOne()) {\n"
+     << indent << "      std::string s;\n"
+     << indent << "      llvm::raw_string_ostream ss(s);\n"
+     << indent << "      ss << \"getrf\" << \"\\n\";\n"
+     << indent << "      ss << \"GETRF differentiation currently requires m "
+        "== n\" "
+        "<< \"\\n\";\n"
+     << indent << "      EmitNoDerivativeError(ss.str(), call, gutils, "
+     << builderName << ");\n"
+     << indent << "      return false;\n"
+     << indent << "    }\n"
+     << indent << "  } else {\n"
+     << indent << "    auto *getrf_insert = &*" << builderName
+     << ".GetInsertPoint();\n"
+     << indent << "    auto *getrf_orig = " << builderName
+     << ".GetInsertBlock();\n"
+     << indent << "    auto *getrf_func = getrf_orig->getParent();\n"
+     << indent
+     << "    auto *getrf_cont = getrf_orig->splitBasicBlock(getrf_insert, "
+        "\"getrf.square.cont\");\n"
+     << indent << "    getrf_orig->getTerminator()->eraseFromParent();\n"
+     << indent << "    auto *getrf_bad = BasicBlock::Create(call.getContext(), "
+        "\"getrf.nonsquare\", getrf_func, getrf_cont);\n"
+     << indent << "    " << builderName << ".SetInsertPoint(getrf_orig);\n"
+     << indent << "    " << builderName
+     << ".CreateCondBr(getrf_can_continue, getrf_cont, "
+        "getrf_bad);\n"
+     << indent << "    " << builderName << ".SetInsertPoint(getrf_bad);\n"
+     << indent << "    auto trap = Intrinsic::getDeclaration(call.getModule(), "
+        "Intrinsic::trap);\n"
+     << indent << "    " << builderName << ".CreateCall(trap);\n"
+     << indent << "    " << builderName << ".CreateUnreachable();\n"
+     << indent << "    " << builderName
+     << ".SetInsertPoint(getrf_cont, getrf_cont->begin());\n"
+     << indent << "  }\n"
+     << indent << "}\n\n";
 }
 
 void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
@@ -2285,6 +2356,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
         "ConstantInt::get(intType, 1), "
      << "byRef, cublas, julia_decl_type, allocationBuilder, \"int.one\");\n";
 
+  emit_shape_guards(pattern, os, "Builder2", "    ");
+
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
   const auto activeArgs = pattern.getActiveArgs();
@@ -2647,6 +2720,10 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
     emit_caching(newPattern, os);
     emit_extract_calls(newPattern, os);
+    os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+       << "      Mode == DerivativeMode::ReverseModeGradient) {\n";
+    emit_shape_guards(newPattern, os, "BuilderZ", "    ");
+    os << "  }\n\n";
 
     emit_fwd_rewrite_rules(newPattern, os);
     emit_rev_rewrite_rules(patternMap, newPattern, os);

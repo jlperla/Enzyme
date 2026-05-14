@@ -374,6 +374,7 @@ enum class CallType {
   POTRF,
   POTRS,
   LASWP,
+  GETRF,
   GETRS,
   TRSM,
   TRTRS,
@@ -419,7 +420,7 @@ struct BlasCall {
     CHECK(type)
     CHECK(pout_arg1)
     CHECK(pin_arg1)
-    CHECK(pout_arg1)
+    CHECK(pin_arg2)
     CHECK(farg1)
     CHECK(farg2)
     CHECK(layout)
@@ -519,6 +520,9 @@ void printty(CallType v) {
     return;
   case CallType::LASWP:
     printf("LASWP");
+    return;
+  case CallType::GETRF:
+    printf("GETRF");
     return;
   case CallType::GETRS:
     printf("GETRS");
@@ -1192,6 +1196,25 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg2);
     printf(", incx=");
     printty(rcall.iarg7);
+    printf(")");
+    return;
+  case CallType::GETRF:
+    printf("GETRF(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", M=");
+    printty(rcall.iarg1);
+    printf(", N=");
+    printty(rcall.iarg2);
+    printf(", A=");
+    printty(rcall.pout_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", ipiv=");
+    printty(rcall.pin_arg2);
     printf(")");
     return;
   case CallType::GETRS:
@@ -2282,6 +2305,34 @@ __attribute__((noinline)) void cblas_dlaswp(char layout, int N, double *A,
   calls.push_back(call);
 }
 
+__attribute__((noinline)) void cblas_dgetrf(char layout, int M, int N,
+                                            double *A, int lda, int *ipiv,
+                                            int *info) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GETRF,
+                   A,
+                   UNUSED_POINTER,
+                   ipiv,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   layout,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   M,
+                   N,
+                   UNUSED_INT,
+                   lda,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
 __attribute__((noinline)) void cblas_dgetrs(char layout, char trans, int N,
                                             int Nrhs, double *A, int lda,
                                             int *ipiv, double *B, int ldb,
@@ -3213,6 +3264,18 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     if (k2 < k1)
       return;
     checkMatrix(A, "A", layout, /*rows=*/k2,
+                /*cols=*/N, /*ld=*/lda, test, rcall, trace);
+    return;
+  }
+  case CallType::GETRF: {
+    auto A = pointer_to_index(rcall.pout_arg1, inputs);
+
+    auto lda = rcall.iarg4;
+    auto layout = rcall.layout;
+    auto M = rcall.iarg1;
+    auto N = rcall.iarg2;
+
+    checkMatrix(A, "A", layout, /*rows=*/M,
                 /*cols=*/N, /*ld=*/lda, test, rcall, trace);
     return;
   }

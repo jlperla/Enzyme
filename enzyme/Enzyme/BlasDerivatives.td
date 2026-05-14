@@ -1095,3 +1095,46 @@ def getrs: CallBlasPattern<(Op $layout, $trans, $n, $nrhs, $A, $lda, $ipiv, $B, 
                     (BlasCall<"getrs"> $layout, $trans, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), $ipiv, (Shadow $B), Alloca<1>)
                   )
                   >;
+
+def getrf: CallBlasPattern<(Op $layout, $m, $n, $A, $lda, $ipiv, $info),
+                  ["A", "ipiv"],
+                  [cblas_layout, len, len, mld<["m", "n"]>, ipiv<["n"]>, info],
+                  [
+                  /* A */
+                    (Seq<["Fbar", "product", "n", "n"], [], 1>
+                      (Seq<["lo", "product", "n", "n"], [], 1>
+                        (BlasCall<"lacpy"> $layout, Char<"L">, $n, $n, (Shadow $A), use<"lo">, $n),
+                        (BlasCall<"lascl"> $layout, Char<"U">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"lo">, $n, Alloca<1>),
+                        (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">, Char<"T">, Char<"U">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"lo">, $n),
+                        (BlasCall<"lacpy"> $layout, Char<"L">, $n, $n, use<"lo">, $n, use<"Fbar">, $n),
+                        (BlasCall<"lascl"> $layout, Char<"U">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"Fbar">, $n, Alloca<1>)
+                      ),
+                      (Seq<["up", "zerotriangular", "n"], [], 1>
+                        (BlasCall<"lacpy"> $layout, Char<"U">, $n, $n, (Shadow $A), use<"up">, $n),
+                        (BlasCall<"trmm"> $layout, Char<"R">, Char<"U">, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"up">, $n),
+                        (BlasCall<"lacpy"> $layout, Char<"U">, $n, $n, use<"up">, $n, use<"Fbar">, $n)
+                      ),
+                      (BlasCall<"trsm"> $layout, Char<"L">, Char<"L">, Char<"T">, Char<"U">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"Fbar">, $n),
+                      (BlasCall<"trsm"> $layout, Char<"R">, Char<"U">, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"Fbar">, $n),
+                      (BlasCall<"laswp"> $layout, $n, use<"Fbar">, $n, ConstantInt<1>, $n, $ipiv, ConstantInt<-1>),
+                      (BlasCall<"lacpy"> $layout, Char<"G">, $n, $n, use<"Fbar">, $n, (Shadow $A))
+                    )
+                  ],
+                  (Seq<["X", "product", "n", "n"], [], 0>
+                    (BlasCall<"lacpy"> $layout, Char<"G">, $n, $n, (Shadow $A), use<"X">, $n),
+                    (BlasCall<"laswp"> $layout, $n, use<"X">, $n, ConstantInt<1>, $n, $ipiv, ConstantInt<1>),
+                    (BlasCall<"trsm"> $layout, Char<"L">, Char<"L">, Char<"N">, Char<"U">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"X">, $n),
+                    (BlasCall<"trsm"> $layout, Char<"R">, Char<"U">, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"X">, $n),
+                    (Seq<["lo", "product", "n", "n"], [], 1>
+                      (BlasCall<"lacpy"> $layout, Char<"L">, $n, $n, use<"X">, $n, use<"lo">, $n),
+                      (BlasCall<"lascl"> $layout, Char<"U">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"lo">, $n, Alloca<1>),
+                      (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">, Char<"N">, Char<"U">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"lo">, $n),
+                      (BlasCall<"lacpy"> $layout, Char<"L">, $n, $n, use<"lo">, $n, (Shadow $A))
+                    ),
+                    (Seq<["up", "zerotriangular", "n"], [], 1>
+                      (BlasCall<"lacpy"> $layout, Char<"U">, $n, $n, use<"X">, $n, use<"up">, $n),
+                      (BlasCall<"trmm"> $layout, Char<"R">, Char<"U">, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"up">, $n),
+                      (BlasCall<"lacpy"> $layout, Char<"U">, $n, $n, use<"up">, $n, (Shadow $A))
+                    )
+                  )
+                  >;

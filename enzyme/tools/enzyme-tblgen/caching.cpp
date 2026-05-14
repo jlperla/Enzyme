@@ -371,7 +371,7 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "    SmallVector<Value *, 2> cacheValues;\n";
 if (pattern.getName() == "potrf" || pattern.getName() == "trtrs" ||
     pattern.getName() == "trsv" || pattern.getName() == "trsm" ||
-    pattern.getName() == "getrs") {
+    pattern.getName() == "getrs" || pattern.getName() == "getrf") {
 os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
 }
   os << "    if (byRef) {\n";
