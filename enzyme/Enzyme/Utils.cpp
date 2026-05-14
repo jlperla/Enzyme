@@ -817,6 +817,8 @@ static inline std::string tofltstr(Type *T) {
     return "quad";
   case Type::PPC_FP128TyID:
     return "ppcddouble";
+  case Type::IntegerTyID:
+    return "i" + std::to_string(cast<IntegerType>(T)->getBitWidth());
   default:
     llvm_unreachable("Invalid floating type");
   }
@@ -1011,7 +1013,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                                              unsigned srcalign,
                                              unsigned dstaddr, unsigned srcaddr,
                                              unsigned bitwidth) {
-  assert(elementType->isFloatingPointTy());
+  assert(elementType->isFloatingPointTy() || elementType->isIntegerTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
     name += std::to_string(bitwidth);
@@ -3689,8 +3691,8 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   const char *extractable[] = {
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
-      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
-      "trsm",
+      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "laswp",
+      "trsv",  "trsm",
   };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};

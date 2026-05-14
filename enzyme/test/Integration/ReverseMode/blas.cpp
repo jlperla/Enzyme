@@ -130,6 +130,14 @@ void my_potrs(char layout, char uplo, int N, int Nrhs, double *__restrict__ A, i
   inDerivative = true;
 }
 
+void my_getrs(char layout, char trans, int N, int Nrhs,
+              double *__restrict__ A, int lda, int *__restrict__ ipiv,
+              double *__restrict__ B, int ldb) {
+  int info;
+  cblas_dgetrs(layout, trans, N, Nrhs, A, lda, ipiv, B, ldb, &info);
+  inDerivative = true;
+}
+
 void my_trtrs(char layout, char uplo, char trans, char diag, int N, int Nrhs,
               double *__restrict__ A, int lda, double *__restrict__ B,
               int ldb) {
@@ -2490,6 +2498,70 @@ static void symmTests() {
   }
 }
 
+static void getrsTests() {
+  int N = 5;
+  int Nrhs = 3;
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto trans : {CBLAS_TRANSPOSE::CblasNoTrans,
+                       CBLAS_TRANSPOSE::CblasTrans}) {
+      int localLDA = N;
+      int localLDB = mat_ld(layout, N, Nrhs);
+      double *pA = A;
+      double *pB = B;
+      double *pdB = dB;
+      int *pIPIV = IPIV;
+      BlasInfo inputs[6] = {
+          /*A*/ BlasInfo(pA, layout, N, N, localLDA),
+          /*B*/ BlasInfo(pB, layout, N, Nrhs, localLDB),
+          /*C*/ BlasInfo(),
+          BlasInfo(),
+          BlasInfo(),
+          BlasInfo(),
+      };
+      {
+        std::string Test = "GETRS active B";
+        init();
+
+        my_getrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pB,
+                 localLDB);
+
+        assert(calls.size() == 1);
+        assert(calls[0].inDerivative == false);
+        assert(calls[0].type == CallType::GETRS);
+        assert(calls[0].pout_arg1 == pB);
+        assert(calls[0].pin_arg1 == pA);
+        assert(calls[0].pin_arg2 == pIPIV);
+        assert(calls[0].layout == layout);
+        assert(calls[0].targ1 == (char)trans);
+        assert(calls[0].iarg1 == N);
+        assert(calls[0].iarg2 == Nrhs);
+        assert(calls[0].iarg4 == localLDA);
+        assert(calls[0].iarg5 == localLDB);
+
+        checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+        init();
+        __enzyme_autodiff((void *)my_getrs, enzyme_const, layout, enzyme_const,
+                          (char)trans, enzyme_const, N, enzyme_const, Nrhs,
+                          enzyme_const, pA, enzyme_const, localLDA,
+                          enzyme_const, pIPIV, enzyme_dup, pB, pdB,
+                          enzyme_const, localLDB);
+        foundCalls = calls;
+        init();
+
+        my_getrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pB,
+                 localLDB);
+        cblas_dgetrs(layout, (char)transpose(trans), N, Nrhs, pA, localLDA,
+                     pIPIV, pdB, localLDB, nullptr);
+
+        checkTest(Test);
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+      }
+    }
+  }
+}
+
 int main() {
   dotTests();
 
@@ -2514,6 +2586,8 @@ int main() {
   potrsTests();
 
   trtrsTests();
+
+  getrsTests();
   
   symmTests();
 

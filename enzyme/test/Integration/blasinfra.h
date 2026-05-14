@@ -334,6 +334,7 @@ int incA = 1234;
 double *B = (double *)0x00010000;
 double *dB = (double *)0x00070000;
 int incB = 5678;
+int *IPIV = (int *)0x00000400;
 
 double *C = (double *)0x01000000;
 double *dC = (double *)0x07000000;
@@ -372,6 +373,8 @@ enum class CallType {
   NRM2,
   POTRF,
   POTRS,
+  LASWP,
+  GETRS,
   TRSM,
   TRTRS,
 };
@@ -514,6 +517,12 @@ void printty(CallType v) {
   case CallType::POTRS:
     printf("POTRS");
     return;
+  case CallType::LASWP:
+    printf("LASWP");
+    return;
+  case CallType::GETRS:
+    printf("GETRS");
+    return;
   case CallType::TRSM:
     printf("TRSM");
     return;
@@ -546,6 +555,8 @@ void printty(void *v) {
     printf("B");
   else if (v == dB)
     printf("dB");
+  else if (v == IPIV)
+    printf("IPIV");
   else if (v == C)
     printf("C");
   else if (v == dC)
@@ -1154,6 +1165,54 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg1);
     printf(", lda=");
     printty(rcall.iarg4);
+    printf(", B=");
+    printty(rcall.pout_arg1);
+    printf(", ldb=");
+    printty(rcall.iarg5);
+    printf(")");
+    return;
+  case CallType::LASWP:
+    printf("LASWP(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", A=");
+    printty(rcall.pout_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", k1=");
+    printty(rcall.iarg5);
+    printf(", k2=");
+    printty(rcall.iarg6);
+    printf(", ipiv=");
+    printty(rcall.pin_arg2);
+    printf(", incx=");
+    printty(rcall.iarg7);
+    printf(")");
+    return;
+  case CallType::GETRS:
+    printf("GETRS(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", trans=");
+    printty(rcall.targ1);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", Nrhs=");
+    printty(rcall.iarg2);
+    printf(", A=");
+    printty(rcall.pin_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", ipiv=");
+    printty(rcall.pin_arg2);
     printf(", B=");
     printty(rcall.pout_arg1);
     printf(", ldb=");
@@ -2195,6 +2254,63 @@ __attribute__((noinline)) void cblas_dpotrs(char layout, char uplo,
   calls.push_back(call);
 }
 
+__attribute__((noinline)) void cblas_dlaswp(char layout, int N, double *A,
+                                            int lda, int k1, int k2, int *ipiv,
+                                            int incx) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::LASWP,
+                   A,
+                   UNUSED_POINTER,
+                   ipiv,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   layout,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   lda,
+                   k1,
+                   k2,
+                   incx,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
+__attribute__((noinline)) void cblas_dgetrs(char layout, char trans, int N,
+                                            int Nrhs, double *A, int lda,
+                                            int *ipiv, double *B, int ldb,
+                                            int *info) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GETRS,
+                   B,
+                   A,
+                   ipiv,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   layout,
+                   trans,
+                   UNUSED_TRANS,
+                   N,
+                   Nrhs,
+                   UNUSED_INT,
+                   lda,
+                   ldb,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
 // Solve op( A )*X = alpha*B,   or   X*op( A ) = alpha*B
 __attribute__((noinline)) void cblas_dtrsm(char layout, char side, char uplo,
                                            char trans, char diag, int M, int N,
@@ -3077,6 +3193,38 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto Nrhs = rcall.iarg2;
 
     auto uplo_char = rcall.uplo;
+
+    checkMatrix(A, "A", layout, /*rows=*/N,
+                /*cols=*/N, /*ld=*/lda, test, rcall, trace);
+
+    checkMatrix(B, "B", layout, /*rows=*/N,
+                /*cols=*/Nrhs, /*ld=*/ldb, test, rcall, trace);
+    return;
+  }
+  case CallType::LASWP: {
+    auto A = pointer_to_index(rcall.pout_arg1, inputs);
+
+    auto lda = rcall.iarg4;
+    auto layout = rcall.layout;
+    auto N = rcall.iarg1;
+    auto k1 = rcall.iarg5;
+    auto k2 = rcall.iarg6;
+
+    if (k2 < k1)
+      return;
+    checkMatrix(A, "A", layout, /*rows=*/k2,
+                /*cols=*/N, /*ld=*/lda, test, rcall, trace);
+    return;
+  }
+  case CallType::GETRS: {
+    auto B = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+
+    auto lda = rcall.iarg4;
+    auto ldb = rcall.iarg5;
+    auto layout = rcall.layout;
+    auto N = rcall.iarg1;
+    auto Nrhs = rcall.iarg2;
 
     checkMatrix(A, "A", layout, /*rows=*/N,
                 /*cols=*/N, /*ld=*/lda, test, rcall, trace);

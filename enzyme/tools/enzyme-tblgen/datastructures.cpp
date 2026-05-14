@@ -55,6 +55,8 @@ const char *TyToString(ArgType ty) {
     return "mldData";
   case ArgType::mldLD:
     return "mldLD";
+  case ArgType::ipiv:
+    return "ipiv";
   case ArgType::uplo:
     return "uplo";
   case ArgType::trans:
@@ -308,6 +310,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, ArgType> &argTypes) {
     } else if (val->isSubClassOf("mld")) {
       argTypes.insert(std::make_pair(pos, ArgType::mldData));
       argTypes.insert(std::make_pair(pos + 1, ArgType::mldLD));
+    } else if (val->isSubClassOf("ipiv")) {
+      argTypes.insert(std::make_pair(pos, ArgType::ipiv));
     } else if (val->isSubClassOf("ap")) {
       argTypes.insert(std::make_pair(pos, ArgType::ap));
     } else {
@@ -361,7 +365,7 @@ void fillRelatedLenghts(
   size_t pos = 0;
   for (auto val : inputTypes) {
     if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld") &&
-        !val->isSubClassOf("ap")) {
+        !val->isSubClassOf("ap") && !val->isSubClassOf("ipiv")) {
       pos += val->getValueAsInt("nelem");
       continue;
     }
@@ -403,6 +407,11 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
       }
+      relatedLengths.insert(std::make_pair(pos, lengths));
+    } else if (val->isSubClassOf("ipiv")) {
+      assert(argsSize == 1);
+      assert(argTypes.lookup(pos) == ArgType::ipiv);
+      assert(argTypes.lookup(lengths[0]) == ArgType::len);
       relatedLengths.insert(std::make_pair(pos, lengths));
     }
     pos += val->getValueAsInt("nelem");
@@ -464,7 +473,8 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg,
   // other args are unrelated to length args
   assert(argTypes.lookup(arg) == ArgType::vincData ||
          argTypes.lookup(arg) == ArgType::mldData ||
-         argTypes.lookup(arg) == ArgType::ap);
+         argTypes.lookup(arg) == ArgType::ap ||
+         argTypes.lookup(arg) == ArgType::ipiv);
 
   assert(relatedLengths.count(arg) == 1);
   auto related = relatedLengths.lookup(arg);

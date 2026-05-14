@@ -104,6 +104,10 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       os << "  updateAnalysis(call.getArgOperand(" << i
          << " + offset), ttPtrInt, &call);\n";
       break;
+    case ArgType::ipiv:
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << " + offset), ttPtrInt, &call);\n";
+      break;
     case ArgType::len:
     case ArgType::vincInc:
     case ArgType::mldLD:

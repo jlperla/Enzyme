@@ -94,6 +94,13 @@ void my_potrs(char layout, char uplo, int N, int Nrhs,
   cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, B, ldb, &info);
 }
 
+void my_getrs(char layout, char trans, int N, int Nrhs,
+              double *__restrict__ A, int lda, int *__restrict__ ipiv,
+              double *__restrict__ B, int ldb) {
+  int info;
+  cblas_dgetrs(layout, trans, N, Nrhs, A, lda, ipiv, B, ldb, &info);
+}
+
 static void dotTests() {
   {
     std::string Test = "DOT active both ";
@@ -1278,6 +1285,116 @@ static void potrsTests() {
   }
 }
 
+static void getrsTests() {
+  int N = 5;
+  int Nrhs = 3;
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto trans : {CBLAS_TRANSPOSE::CblasNoTrans,
+                       CBLAS_TRANSPOSE::CblasTrans}) {
+      int tmpLD = mat_ld(layout, N, Nrhs);
+      int localLDA = N;
+      int localLDB = tmpLD;
+      double Abuf[64], dAbuf[64], Bbuf[64], dBbuf[64];
+      for (int i = 0; i < 64; i++) {
+        Abuf[i] = i + 1;
+        dAbuf[i] = 0.01 * (i + 1);
+        Bbuf[i] = 0.02 * (i + 1);
+        dBbuf[i] = 0.03 * (i + 1);
+      }
+      double *pA = Abuf;
+      double *pdA = dAbuf;
+      double *pB = Bbuf;
+      double *pdB = dBbuf;
+      int *pIPIV = IPIV;
+      {
+        std::string Test = "GETRS active A, B";
+        init();
+
+        my_getrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pB,
+                 localLDB);
+
+        assert(calls.size() == 1);
+        assert(calls[0].type == CallType::GETRS);
+        assert(calls[0].pout_arg1 == pB);
+        assert(calls[0].pin_arg1 == pA);
+        assert(calls[0].pin_arg2 == pIPIV);
+        assert(calls[0].layout == layout);
+        assert(calls[0].targ1 == (char)trans);
+        assert(calls[0].iarg1 == N);
+        assert(calls[0].iarg2 == Nrhs);
+        assert(calls[0].iarg4 == localLDA);
+        assert(calls[0].iarg5 == localLDB);
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_getrs, enzyme_const, layout, enzyme_const, (char)trans,
+            enzyme_const, N, enzyme_const, Nrhs, enzyme_dup, pA, pdA,
+            enzyme_const, localLDA, enzyme_const, pIPIV, enzyme_dup, pB, pdB,
+            enzyme_const, localLDB);
+        foundCalls = calls;
+        init();
+
+        assert(foundCalls.size() >= 14);
+        assert(foundCalls[1].type == CallType::LACPY);
+        double *tmp = (double *)foundCalls[1].pout_arg1;
+        assert(foundCalls[7].type == CallType::LACPY);
+        double *tmp2 = (double *)foundCalls[7].pout_arg1;
+
+        bool normal = is_normal((char)trans);
+        char uplo1 = normal ? 'U' : 'L';
+        char uplo2 = normal ? 'L' : 'U';
+        char tr = normal ? 'N' : 'T';
+        char diag1 = normal ? 'N' : 'U';
+        char diag2 = normal ? 'U' : 'N';
+
+        my_getrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pB,
+                 localLDB);
+
+        cblas_dlacpy(layout, 'G', N, Nrhs, pB, localLDB, tmp, tmpLD);
+        cblas_dlaswp(layout, Nrhs, tmp, tmpLD, 1, normal ? 0 : N, pIPIV, 1);
+        cblas_dtrmm(layout, 'L', uplo1, tr, diag1, N, Nrhs, 1.0, pA,
+                    localLDA, tmp, tmpLD);
+        cblas_dtrmm(layout, 'L', uplo2, tr, diag2, N, Nrhs, 1.0, pdA,
+                    localLDA, tmp, tmpLD);
+        cblas_dlaswp(layout, Nrhs, tmp, tmpLD, 1, normal ? N : 0, pIPIV, -1);
+        cblas_dlascl(layout, 'G', 0, 0, 1.0, -1.0, N, Nrhs, tmp, tmpLD, 0);
+
+        cblas_dlacpy(layout, 'G', N, Nrhs, pB, localLDB, tmp2, tmpLD);
+        cblas_dlaswp(layout, Nrhs, tmp2, tmpLD, 1, normal ? 0 : N, pIPIV, 1);
+        cblas_dtrmm(layout, 'L', uplo1, tr, diag1, N, Nrhs, 1.0, pdA,
+                    localLDA, tmp2, tmpLD);
+        cblas_dtrmm(layout, 'L', uplo2, tr, diag2, N, Nrhs, 1.0, pA,
+                    localLDA, tmp2, tmpLD);
+        cblas_dlaswp(layout, Nrhs, tmp2, tmpLD, 1, normal ? N : 0, pIPIV, -1);
+        cblas_dlascl(layout, 'G', 0, 0, 1.0, -1.0, N, Nrhs, tmp2, tmpLD, 0);
+        cblas_dgetrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pdB,
+                     localLDB, nullptr);
+
+        checkTest(Test);
+      }
+      {
+        std::string Test = "GETRS active B";
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_getrs, enzyme_const, layout, enzyme_const, (char)trans,
+            enzyme_const, N, enzyme_const, Nrhs, enzyme_const, pA,
+            enzyme_const, localLDA, enzyme_const, pIPIV, enzyme_dup, pB, pdB,
+            enzyme_const, localLDB);
+        foundCalls = calls;
+        init();
+
+        my_getrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pB,
+                 localLDB);
+        cblas_dgetrs(layout, (char)trans, N, Nrhs, pA, localLDA, pIPIV, pdB,
+                     localLDB, nullptr);
+
+        checkTest(Test);
+      }
+    }
+  }
+}
+
 int main() {
   dotTests();
 
@@ -1292,6 +1409,8 @@ int main() {
   potrfTests();
 
   potrsTests();
+
+  getrsTests();
 
   symvTests();
 

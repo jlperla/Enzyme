@@ -207,7 +207,7 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (isVecLikeArg(ty)) {
+    if (isVecLikeArg(ty) || ty == ArgType::ipiv) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        CreateDealloc(Builder2, free_" << name << ");\n"
@@ -738,6 +738,13 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     // TODO: corresponding LD should become matrix width?
   }
 
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) != ArgType::ipiv)
+      continue;
+    auto name = nameVec[i];
+    extract_mat_or_vec(name, os);
+  }
+
   for (size_t j = 0; j < activeArgs.size(); j++) {
     size_t i = activeArgs[j];
     if (typeMap.lookup(i) != ArgType::vincData)
@@ -793,6 +800,8 @@ SmallString<80> ValueType_helper(const TGPattern &pattern, ssize_t actPos,
     }
 
     if (ty == ArgType::len) {
+      valueTypes.append("ValueType::Primal");
+    } else if (ty == ArgType::ipiv) {
       valueTypes.append("ValueType::Primal");
     } else if (ty == ArgType::fp) {
       auto floatName = nameVec[pos];
@@ -1017,6 +1026,16 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << "{to_blas_callconv(Builder2, is_left(Builder2, arg_" << sideName
            << ", byRef, cublas), byRef, cublas, julia_decl_type, "
               "allocationBuilder, \"isleft\")}";
+        return;
+      }
+      if (Def->getName() == "is_normal") {
+        if (Dag->getNumArgs() != 1)
+          PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
+        const auto transName = Dag->getArgNameStr(0);
+        os << "{to_blas_callconv(Builder2, is_normal(Builder2, arg_"
+           << transName
+           << ", byRef, cublas), byRef, cublas, julia_decl_type, "
+              "allocationBuilder, \"isnormal\")}";
         return;
       }
       if (Def->getName() == "is_lower") {
@@ -1464,6 +1483,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
     case ArgType::vincInc:
     case ArgType::vincData:
     case ArgType::mldLD:
+    case ArgType::ipiv:
     case ArgType::mldData: {
       os << "{";
       os << "arg_" << name;
@@ -1520,7 +1540,8 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   os << "        if (byRef) {\n";
   int n = 0;
   if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf" ||
-      func == "lacpy" || func == "spmv" || func == "spr2" || func == "symv")
+      func == "getrs" || func == "lacpy" || func == "spmv" || func == "spr2" ||
+      func == "symv")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
@@ -1754,7 +1775,10 @@ void emit_if_rule_condition(const TGPattern &pattern, const DagInit *ruleDag,
     if (seenAnd)
       os << " && ";
     os << extraCond;
+    seenAnd = true;
   }
+  if (!seenAnd)
+    os << "true";
   os << ") {\n";
 }
 
@@ -2464,8 +2488,9 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
-    // TRSV/TRTRS need the solved cotangent before forming dA.
-    size_t i = (pattern.getName() != "trtrs" && pattern.getName() != "trsv")
+    // TRSV/TRTRS/GETRS need the solved cotangent before forming dA.
+    size_t i = (pattern.getName() != "trtrs" && pattern.getName() != "trsv" &&
+                pattern.getName() != "getrs")
                    ? iteri
                    : (activeArgs.size() - 1 - iteri);
     StringRef extraCond;

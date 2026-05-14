@@ -153,6 +153,10 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
       os << "  F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::get(F->getContext(), \"enzyme_inactive\"));\n";
     }
+    if (typeOfArg == ArgType::ipiv) {
+      os << "  F->addParamAttr(" << i << " + offset"
+         << ", llvm::Attribute::get(F->getContext(), \"enzyme_inactive\"));\n";
+    }
   }
 
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
@@ -179,7 +183,8 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
-    if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
+    if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData ||
+        typeOfArg == ArgType::ipiv) {
       os << "  addFunctionNoCapture(F, " << i << " + offset);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable

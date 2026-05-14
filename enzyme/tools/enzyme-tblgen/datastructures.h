@@ -23,6 +23,7 @@ enum class ArgType {
   // following for lv2 only
   mldData,
   mldLD,
+  ipiv,
   uplo,
   trans,
   diag,

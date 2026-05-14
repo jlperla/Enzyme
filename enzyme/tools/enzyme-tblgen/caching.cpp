@@ -120,7 +120,8 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     } else if (ty == ArgType::fp) {
       scalarType = "fpType";
     } else {
-      assert(ty == ArgType::cblas_layout || isVecLikeArg(ty) || ty == ArgType::info);
+      assert(ty == ArgType::cblas_layout || isVecLikeArg(ty) ||
+             ty == ArgType::ipiv || ty == ArgType::info);
       continue;
     }
   os
@@ -134,6 +135,10 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
       os
 << "  if (cache_" << nameVec[i] << ")\n"
 << "    cacheTypes.push_back(getUnqual(fpType));\n";
+    } else if (ty == ArgType::ipiv) {
+      os
+<< "  if (cache_" << nameVec[i] << ")\n"
+<< "    cacheTypes.push_back(getUnqual(intType));\n";
     }
   }
 }
@@ -320,6 +325,37 @@ os << "      if (EnzymeLapackCopy) {\n"
 << "    }\n";
     }
   }
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    if (ty != ArgType::ipiv)
+      continue;
+    auto name = nameVec[i];
+    auto dimensions = pattern.getRelatedLengthArgs(i);
+    assert(dimensions.size() == 1);
+    os
+<< "    if (cache_" << name << ") {\n"
+<< "      Value *malloc_size = arg_" << nameVec[dimensions[0]] << ";\n"
+<< "      Value *arg_malloc_size = malloc_size;\n"
+<< "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
+<< "      auto malins = CreateAllocation(BuilderZ, intType, malloc_size, \"cache." << name << "\");\n"
+<< "      ValueType valueTypes[] = {" << valueTypes << "};\n";
+    for (auto len_pos : pattern.getRelatedLengthArgs(i)) {
+os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+    }
+os
+<< "      auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), intType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
+<< "      Value *args[4] = {malins, arg_" << name << ", malloc_size, ConstantInt::get(intType, 1)};\n"
+<< "      if (args[1]->getType()->isIntegerTy())\n"
+<< "        args[1] = BuilderZ.CreateIntToPtr(args[1], malins->getType());\n"
+<< "      else if (args[1]->getType() != malins->getType())\n"
+<< "        args[1] = BuilderZ.CreatePointerCast(args[1], malins->getType());\n"
+<< "      BuilderZ.CreateCall(dmemcpy, args,\n"
+<< "          gutils->getInvertedBundles(&call, valueTypes,\n"
+<< "          BuilderZ, /*lookup*/ false));\n"
+<< "      cacheValues.push_back(malins);\n"
+<< "    }\n";
+  }
 }
 
 void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
@@ -334,7 +370,8 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "       Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n"
 << "    SmallVector<Value *, 2> cacheValues;\n";
 if (pattern.getName() == "potrf" || pattern.getName() == "trtrs" ||
-    pattern.getName() == "trsv" || pattern.getName() == "trsm") {
+    pattern.getName() == "trsv" || pattern.getName() == "trsm" ||
+    pattern.getName() == "getrs") {
 os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
 }
   os << "    if (byRef) {\n";
@@ -409,6 +446,14 @@ os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode())
     if (seen) {
       os << "  Value *input_" << name << " = nullptr;\n"
          << "  Value *free_input_" << name << " = nullptr;\n";
+    }
+  }
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    if (ty == ArgType::ipiv) {
+      auto name = nameVec[i];
+      os << "  Value *free_" << name << " = nullptr;\n";
     }
   }
 
